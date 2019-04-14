@@ -14,7 +14,7 @@ def hidden_init(layer):
 class Actor(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, seed=42, fc1_units=512, fc2_units=256):
+    def __init__(self, state_size, action_size, fc1_units=400, fc2_units=300, random_seed=42):
         """Initialize parameters and build model.
         Params
         ======
@@ -25,7 +25,7 @@ class Actor(nn.Module):
             fc2_units (int): Number of nodes in second hidden layer
         """
         super(Actor, self).__init__()
-        self.seed = torch.manual_seed(seed)
+        self.random_seed = torch.manual_seed(random_seed)
         self.fc1 = nn.Linear(state_size, fc1_units)
         self.fc2 = nn.Linear(fc1_units, fc2_units)
         self.fc3 = nn.Linear(fc2_units, action_size)
@@ -41,6 +41,8 @@ class Actor(nn.Module):
         self.fc1.weight.data.uniform_(*hidden_init(self.fc1))
         self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
         self.fc3.weight.data.uniform_(-3e-3, 3e-3)
+        
+        return None
 
     def forward(self, state):
         """Build an actor (policy) network that maps states -> actions."""
@@ -60,65 +62,48 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     """Critic (Value) Model."""
 
-    def __init__(self, state_size, action_size,
-                 num_agents,
-                 seed=42, fcs1_units=512, fc2_units=256):
+    def __init__(self, input_size, fc1_units=400, fc2_units=300, random_seed=42):
         """Initialize parameters and build model.
         Params
         ======
-            state_size (int): Dimension of each state
-            action_size (int): Dimension of each action
-            seed (int): Random seed
-            fcs1_units (int): Number of nodes in the first hidden layer
-            fc2_units (int): Number of nodes in the second hidden layer
-            num_agents (int): Number of agents
+            input_size (int): number of dimensions for input layer
+            seed (int): random seed
+            fc1_units (int): number of nodes in the first hidden layer
+            fc2_units (int): number of nodes in the second hidden layer
         """
         super(Critic, self).__init__()
-        self.seed = torch.manual_seed(seed)
-        self.fcs1 = nn.Linear(state_size, fcs1_units)
-        self.fc2 = nn.Linear(fcs1_units+action_size*num_agents, fc2_units)
+        self.random_seed = torch.manual_seed(random_seed)
+        self.fc1 = nn.Linear(input_size, fc1_units)
+        self.fc2 = nn.Linear(fc1_units, fc2_units)
         self.fc3 = nn.Linear(fc2_units, 1)
-        
-        # get number of agents
-        self.num_agents = num_agents
-        
+        self.bn1 = nn.BatchNorm1d(fc1_units)
+        self.bn2 = nn.BatchNorm1d(fc2_units)
         self.reset_parameters()
-        
-        # batch norms
-        self.bn1 = nn.BatchNorm1d(fcs1_units)
-        
-        return None
 
     def reset_parameters(self):
-        self.fcs1.weight.data.uniform_(*hidden_init(self.fcs1))
+        """Initialize weights with near zero values."""
+        self.fc1.weight.data.uniform_(*hidden_init(self.fc1))
         self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
         self.fc3.weight.data.uniform_(-3e-3, 3e-3)
 
-    def forward(self, state, action):
-        """Build a critic (value) network that maps (state, action) pairs -> Q-values."""
-        if state.dim() == 1:
-            state = torch.unsqueeze(state, 0)
-        
-        xs = F.relu(self.fcs1(state))
-        xs = self.bn1(xs)
-        
-        if len(action.size()) == 1:
-            action = torch.unsqueeze(action, 0)
-        
-        x = torch.cat((xs, action * self.num_agents), dim=1)
+    def forward(self, states, actions):
+        """Build a critic network that maps (states, actions) pairs to Q-values."""
+        xs = torch.cat((states, actions), dim=1)
+        x = F.relu(self.fc1(xs))
+        x = self.bn1(x)
         x = F.relu(self.fc2(x))
         
         out = self.fc3(x)
         
         return out
 
-class ActorCritic():
+class ActorCritic(object):
     """Purpose: set up Actor and Critic Networks
     needed for each Agent.
     """
     
     def __init__(self, state_size, action_size,
-                 num_agents,
+                 num_agents, fc1_units, fc2_units,
                  random_seed):
         
         """Initialize an Agent object.
@@ -132,72 +117,14 @@ class ActorCritic():
         """
         
         # Actor Network (w/ Target Network)
-        self.actor_local = Actor(state_size, action_size, random_seed).to(device)
-        self.actor_target = Actor(state_size, action_size, random_seed).to(device)
+        self.actor_local = Actor(state_size, action_size, fc1_units, fc2_units, random_seed).to(device)
+        self.actor_target = Actor(state_size, action_size, fc1_units, fc2_units, random_seed).to(device)
         
         # this is to account for shared Critic between agents
-        critic_input_size = state_size * num_agents
-        
+        critic_input_size = (state_size + action_size) * num_agents
+
         # Critic Network (w/ Target Network)
-        self.critic_local = Critic(critic_input_size, action_size, num_agents, random_seed).to(device)
-        self.critic_target = Critic(critic_input_size, action_size, num_agents, random_seed).to(device)
+        self.critic_local = Critic(critic_input_size, fc1_units, fc2_units, random_seed).to(device)
+        self.critic_target = Critic(critic_input_size, fc1_units, fc2_units, random_seed).to(device)
         
         return None
-
-    
-    
-    
-# class Critic(nn.Module):
-#     """Critic (Value) Model."""
-
-#     def __init__(self, state_size, action_size,
-#                  num_agents,
-#                  seed=42, fcs1_units=256, fc2_units=256):
-#         """Initialize parameters and build model.
-#         Params
-#         ======
-#             state_size (int): Dimension of each state
-#             action_size (int): Dimension of each action
-#             seed (int): Random seed
-#             fcs1_units (int): Number of nodes in the first hidden layer
-#             fc2_units (int): Number of nodes in the second hidden layer
-#             num_agents (int): Number of agents
-#         """
-#         super(Critic, self).__init__()
-#         self.seed = torch.manual_seed(seed)
-#         self.fcs1 = nn.Linear(state_size, fcs1_units)
-#         self.fc2 = nn.Linear(fcs1_units+action_size*num_agents, fc2_units)
-#         self.fc3 = nn.Linear(fc2_units, 1)
-        
-#         # get number of agents
-#         self.num_agents = num_agents
-        
-#         self.reset_parameters()
-        
-#         # batch norms
-#         self.bn1 = nn.BatchNorm1d(fcs1_units)
-        
-#         return None
-
-#     def reset_parameters(self):
-#         self.fcs1.weight.data.uniform_(*hidden_init(self.fcs1))
-#         self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
-#         self.fc3.weight.data.uniform_(-3e-3, 3e-3)
-
-#     def forward(self, state, action):
-#         """Build a critic (value) network that maps (state, action) pairs -> Q-values."""
-#         if state.dim() == 1:
-#             state = torch.unsqueeze(state, 0)
-        
-#         xs = F.relu(self.fcs1(state))
-#         xs = self.bn1(xs)
-        
-#         if len(action.size()) == 1:
-#             action = torch.unsqueeze(action, 0)
-        
-#         x = torch.cat((xs, action * self.num_agents), dim=1)
-#         x = F.relu(self.fc2(x))
-        
-#         out = self.fc3(x)
-        
-#         return out

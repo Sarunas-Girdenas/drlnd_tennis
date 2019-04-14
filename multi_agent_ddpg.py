@@ -14,8 +14,10 @@ BATCH_SIZE = 256        # minibatch size
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
 LR_ACTOR = 1e-4         # learning rate of the actor 
-LR_CRITIC = 3e-4        # learning rate of the critic
+LR_CRITIC = 1e-3        # learning rate of the critic
 WEIGHT_DECAY = 0        # L2 weight decay
+FC1_UNITS = 256         # Number of Neurons in the 1st fully connected layer
+FC2_UNITS = 256         # Number of Neurons in the 2nd fully connected layer
 
 """
 Taken from: https://github.com/udacity/deep-reinforcement-learning/blob/master/ddpg-bipedal/ddpg_agent.py
@@ -45,7 +47,8 @@ class MultiAgentDDPG():
         """
         
         # create two agents with their own instances of Actor and Critic
-        models = [ActorCritic(state_size, action_size, num_agents, random_seed) for _ in range(num_agents)]
+        models = [ActorCritic(
+            state_size, action_size, num_agents, FC1_UNITS, FC2_UNITS, random_seed) for _ in range(num_agents)]
         
         # create agents
         self.agents = [Agent(model, action_size, random_seed, i) for i, model in enumerate(models)]
@@ -86,11 +89,11 @@ class MultiAgentDDPG():
         if len(self.memory) > BATCH_SIZE:
             
             # list of experiences for each agent
-            experiences = [self.memory.sample() for _ in range(self.num_agents)]
+            # experiences = [self.memory.sample() for _ in range(self.num_agents)]
             
             # use the same for all agents
-            # e = self.memory.sample()
-            # experiences = [e for _ in range(self.num_agents)]
+            e = self.memory.sample()
+            experiences = [e for _ in range(self.num_agents)]
             
             # each agent learns (loops over each agent in self.learn())
             self.learn(experiences, GAMMA)
@@ -135,7 +138,7 @@ class MultiAgentDDPG():
     
         return None
     
-    def act(self, states, decay):
+    def act(self, states, noise_counter):
         """
         Given the state, return action for each agent.
         Params
@@ -149,7 +152,7 @@ class MultiAgentDDPG():
         actions_ = []
         
         for agent, state in zip(self.agents, states):
-            action = agent.act(state, decay)
+            action = agent.act(state, noise_counter)
             actions_.append(action)
         
         # reshape array to get 1 by 4 output
@@ -206,21 +209,28 @@ class Agent():
         
         return None
 
-    def act(self, state, add_noise=True, decay=1):
+    def act(self, state, noise_counter, add_noise=True):
         """Returns actions for given state as per current policy."""
+        
+        print_counter = 1
+        
         state = torch.from_numpy(state).float().to(device)
         self.actor_local.eval()
         with torch.no_grad():
             action = self.actor_local(state).cpu().data.numpy()
         self.actor_local.train()
         if add_noise:
-            action = action + (1.0/decay) * self.noise.sample()
+            if noise_counter < 100000:    
+                action = action + self.noise.sample()
+            else:
+                action = action
+                
         return np.clip(action, -1, 1)
 
     def reset(self):
         self.noise.reset()
 
-    def learn(self, experiences, gamma, next_actions, actions, agent_id):
+    def learn(self, experiences, gamma, all_next_actions, all_actions, agent_id):
         """Update policy and value parameters using given batch of experience tuples.
         Q_targets = r + γ * critic_target(next_state, actor_target(next_state))
         where:
@@ -236,54 +246,45 @@ class Agent():
         """
         states, actions, rewards, next_states, dones = experiences
         
-        # convert agent_id to pytorch
-        agent_id = torch.tensor([agent_id]).to(device)
-        
-        # put all next_actions into array
-        actions_next = torch.cat(next_actions, dim=1).to(device)
-
         # ---------------------------- update critic ---------------------------- #
-        # Get predicted next-state actions and Q values from target models
+        # get predicted next-state actions and Q values from target models
+        agent_id = torch.tensor([agent_id]).to(device)
+        actions_next = torch.cat(all_next_actions, dim=1).to(device)
         with torch.no_grad():
             Q_targets_next = self.critic_target(next_states, actions_next)
-        # Compute Q targets for current states (y_i). Also take rewards only for the given agent_id
-        Q_targets = rewards.index_select(1, agent_id) + (gamma * Q_targets_next * (1 - dones.index_select(1, agent_id)))
-        # Compute critic loss
+        # compute Q targets for current states (y_i)
         Q_expected = self.critic_local(states, actions)
-        # huber loss
-        #huber = torch.nn.SmoothL1Loss()
-        critic_loss = F.mse_loss(Q_expected, Q_targets.detach()) # use detach to make sure that we can pass through network
-        
-        # store critic_loss
-        self.critic_loss = critic_loss.data.numpy()
-        
-        # Minimize the loss
+        Q_targets = rewards.index_select(1, agent_id) + (gamma * Q_targets_next * (1 - dones.index_select(1, agent_id)))
+        # compute critic loss
+        critic_loss = F.mse_loss(Q_expected, Q_targets.detach())
+        # minimize loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
+        
+        # store critic loss for reporting
+        self.critic_loss = critic_loss.data.numpy()
 
         # ---------------------------- update actor ---------------------------- #
-        # Compute actor loss
-        # detach actions from others
-        
-        actions_pred = [a.unsqueeze(1) if i == self.id_agent else a.unsqueeze(1).detach() for i, a in enumerate(actions)]
-        
-        # put actions together
-        actions_pred = torch.cat(actions_pred, dim=1).transpose(dim0=0, dim1=1).to(device)
+        # compute actor loss
+        # detach actions from other agents
+        actions_pred = [actions if i == self.id_agent else actions.detach() for i, actions in enumerate(all_actions)]
+        actions_pred = torch.cat(actions_pred, dim=1).to(device)
         actor_loss = -self.critic_local(states, actions_pred).mean()
-        
-        # store loss
-        self.actor_loss = actor_loss.data.numpy()
-        
-        # Minimize the loss
+        # minimize loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
+        
+        # store actor loss for reporting
+        self.actor_loss = actor_loss.data.numpy()
 
         # ----------------------- update target networks ----------------------- #
         self.soft_update(self.critic_local, self.critic_target, TAU)
-        self.soft_update(self.actor_local, self.actor_target, TAU)                     
+        self.soft_update(self.actor_local, self.actor_target, TAU)
+        
+        return None
+        
 
     def soft_update(self, local_model, target_model, tau):
         """Soft update model parameters.
