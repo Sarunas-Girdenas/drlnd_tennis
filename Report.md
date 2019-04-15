@@ -7,7 +7,7 @@ To solve this task I've used [Multi Agents Deep Deterministic Policy Gradient](h
 
 ## Learning Algorithm
 
-Multi Agent DDPG is an adaptation of DDPG algorithm for the multiple agents. Here all agents have access to all each others' state observation and actions during Critic training but use only their own state observation to predict its action. This ensures that the environment is stationary from the agent's point of view. Since the Critic is centralised, all agents' states and actions are concatenated and sent to Critic network as an input. The network outputs Q-value for that state. Then Q-value is used to train Actor for each agent which outputs predicted action values. This [link](https://medium.com/brillio-data-science/improving-openai-multi-agent-actor-critic-rl-algorithm-27719f3cafd4) provides more detailed summary of the algorithm.
+Multi Agent DDPG is an adaptation of DDPG algorithm for the multiple agents. Here, all agents have access to each others' state observations and actions during Critic training but use only their own state observation to predict their actions. This ensures that the environment is stationary from the agent's point of view. Since the Critic is centralised, all agents' states and actions are concatenated and sent to Critic network as an input. The network outputs Q-value for that state. Then Q-value is used to train Actor for each agent which outputs predicted action values. This [link](https://medium.com/brillio-data-science/improving-openai-multi-agent-actor-critic-rl-algorithm-27719f3cafd4) provides more detailed summary of the algorithm.
 
 ## Model Architectures and Hyperparameters Used
 
@@ -27,7 +27,7 @@ In terms of parameters, here are the list I've used in `multi_agent_ddpg.py` fil
 
 In addition, adding extra layers to either Actor or Critic networks did not improve learning. I've also tried using batch normalization on more than 1 layer but it did not help either. The more interesting aspect was the role of noise in the training process. To begin with, I've left the noise for the whole training process but agents were not learning well. Then, I've decided to _turn off_ the noise after some time and it turned out to improve training as well. Its probably because after some training and making _noisy_ decisions agents have explored enough and removing noise improves training further.</br>
 
-![Training Scores](https://raw.githubusercontent.com/username/projectname/branch/path/to/img.png)
+![Training Scores](https://github.com/Sarunas-Girdenas/drlnd_tennis/blob/master/train.png)
 
 As we can see, models did not train well for nearly 4000 episodes and then suddenly the scores jumped (at about 4000th episode). I think one possible explanation could be that the noise might have been switched off at about that time so agents predictions have became less noisy and training improved.
 
